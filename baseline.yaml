@@ -1,0 +1,13 @@
+data_dir: "images"
+train_csv: "Data_Entry_2017_v2020.csv"
+val_csv: "Data_Entry_2017_v2020.csv"
+test_csv: "Data_Entry_2017_v2020.csv"
+model_name: "resnet50"
+pretrained: true
+num_classes: 14
+batch_size: 32
+num_workers: 4
+num_epochs: 3
+learning_rate: 0.0001
+image_size: 224
+use_augmentation: true
