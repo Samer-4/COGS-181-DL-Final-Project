@@ -11,11 +11,22 @@ class ChestXRayDataset(Dataset):
     def __init__(self, data_dir, csv_file, transform=None, phase='train'):
         self.data_dir = data_dir
         self.df = pd.read_csv(csv_file)  
-        self.df = self.df[self.df['Image Index'].apply(
+        self.df = pd.read_csv(csv_file)
+
+        # Track how many entries exist in the original CSV
+        self.total_csv_entries = len(self.df)
+
+        # Check which images actually exist locally
+        image_exists = self.df["Image Index"].apply(
             lambda x: os.path.exists(os.path.join(self.data_dir, x))
-        )]
-        self.df = self.df.reset_index(drop=True)
-        
+        )
+
+        # Track how many images are missing
+        self.missing_images = (~image_exists).sum()
+
+        # Keep only images that actually exist
+        self.df = self.df[image_exists].reset_index(drop=True)
+
         self.phase = phase
         self.conditions = [
             'Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration',
@@ -78,8 +89,43 @@ class ChestXRayDataset(Dataset):
             'image_path': img_name
         }
 
-# Example usage:
-# Since images are in the same folder as this Python file, we set data_dir to "."
-data_dir = "."
-csv_file = "Data_Entry_2017_v2020.csv"
-dataset = ChestXRayDataset(data_dir=data_dir, csv_file=csv_file, phase='train')
+if __name__ == "__main__":
+    data_dir = "images"
+    csv_file = "Data_Entry_2017_v2020.csv"
+
+    dataset = ChestXRayDataset(
+        data_dir=data_dir,
+        csv_file=csv_file,
+        phase="train"
+    )
+
+    print("\n--- Dataset Summary ---")
+
+    print(f"CSV entries: {dataset.total_csv_entries}")
+    print(f"Images found: {len(dataset)}")
+    print(f"Images missing: {dataset.missing_images}")
+
+    print(f"Unique patients: {dataset.df['Patient ID'].nunique()}")
+
+    print("\n--- Label Distribution ---")
+    print(
+        dataset.df[dataset.conditions]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    no_finding = (
+        dataset.df["Finding Labels"] == "No Finding"
+    ).sum()
+
+    print(f"\nNo Finding: {no_finding}")
+
+    multi_label = (
+        dataset.df["Finding Labels"]
+        .str.split("|")
+        .apply(len)
+        .gt(1)
+        .sum()
+    )
+
+    print(f"Multi-label images: {multi_label}")
