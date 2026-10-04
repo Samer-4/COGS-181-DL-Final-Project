@@ -1,4 +1,4 @@
-# ChestX-Ray Multi-Label Classification
+# Multi-Label Chest X-Ray Classifier
 
 **Deep learning pipeline for detecting 14 thoracic conditions from chest X-rays using PyTorch and ResNet-50.**
 
