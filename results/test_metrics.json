@@ -1,0 +1,22 @@
+{
+    "checkpoint": "epoch_7_best_validation_auc",
+    "test_images": 16491,
+    "test_patients": 4621,
+    "average_test_roc_auc": 0.8225393029511389,
+    "per_class_test_roc_auc": {
+        "Atelectasis": 0.7935447048872124,
+        "Cardiomegaly": 0.8961548373253896,
+        "Effusion": 0.8718735912144349,
+        "Infiltration": 0.6960026751863188,
+        "Mass": 0.8044930782689792,
+        "Nodule": 0.742164098082019,
+        "Pneumonia": 0.7379557416892937,
+        "Pneumothorax": 0.8774889657797006,
+        "Consolidation": 0.7913148720658676,
+        "Edema": 0.8925658594787648,
+        "Emphysema": 0.9267537706718412,
+        "Fibrosis": 0.7957366651348388,
+        "Pleural_Thickening": 0.7946511133816971,
+        "Hernia": 0.8948502681495878
+    }
+}

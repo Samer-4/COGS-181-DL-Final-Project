@@ -1,99 +1,259 @@
+import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
-from PIL import Image
-import cv2 
+
 
 class GradCAM:
-    
+    """
+    Generate Grad-CAM heatmaps for a target convolutional layer.
+    """
+
     def __init__(self, model, target_layer):
         self.model = model
         self.target_layer = target_layer
+
         self.gradients = None
         self.activations = None
-        
-        def forward_hook(module, input, output):
-            self.activations = output
-            
-        def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0]
-        
-        target_layer.register_forward_hook(forward_hook)
-        target_layer.register_backward_hook(backward_hook)
-    
-    def generate_cam(self, input_image, target_class):
-        model_output = self.model(input_image)
-        
+
+        self.forward_handle = (
+            self.target_layer.register_forward_hook(
+                self._forward_hook
+            )
+        )
+
+        self.backward_handle = (
+            self.target_layer.register_full_backward_hook(
+                self._backward_hook
+            )
+        )
+
+    def _forward_hook(self, module, inputs, output):
+        self.activations = output
+
+    def _backward_hook(
+        self,
+        module,
+        grad_input,
+        grad_output,
+    ):
+        self.gradients = grad_output[0]
+
+    def generate_cam(
+        self,
+        input_tensor,
+        target_class=None,
+    ):
+        """
+        Generate a normalized Grad-CAM heatmap.
+
+        Args:
+            input_tensor:
+                Model input with shape [1, 3, H, W].
+
+            target_class:
+                Disease class index to explain. If None,
+                the highest-logit class is selected.
+
+        Returns:
+            NumPy heatmap normalized to [0, 1].
+        """
+        self.model.eval()
+
+        output = self.model(input_tensor)
+
         if target_class is None:
-            target_class = torch.argmax(model_output)
-        
+            target_class = (
+                output[0]
+                .argmax()
+                .item()
+            )
+
         self.model.zero_grad()
-        
-        model_output[0, target_class].backward(retain_graph=True)
-        
-        gradients = self.gradients.cpu().data.numpy()[0]
-        activations = self.activations.cpu().data.numpy()[0]
-        
-        weights = np.mean(gradients, axis=(1, 2))
-        
-        cam = np.zeros(activations.shape[1:], dtype=np.float32)
-        for i, w in enumerate(weights):
-            cam += w * activations[i]
-        
+
+        score = output[0, target_class]
+        score.backward()
+
+        if self.gradients is None:
+            raise RuntimeError(
+                "Gradients were not captured."
+            )
+
+        if self.activations is None:
+            raise RuntimeError(
+                "Activations were not captured."
+            )
+
+        gradients = (
+            self.gradients[0]
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        activations = (
+            self.activations[0]
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        # Average gradients spatially to determine
+        # the importance of each feature channel.
+        weights = np.mean(
+            gradients,
+            axis=(1, 2),
+        )
+
+        cam = np.zeros(
+            activations.shape[1:],
+            dtype=np.float32,
+        )
+
+        for weight, activation in zip(
+            weights,
+            activations,
+        ):
+            cam += weight * activation
+
+        # Standard Grad-CAM applies ReLU.
         cam = np.maximum(cam, 0)
-        
-        cam = cv2.resize(cam, input_image.shape[2:])
-        
-        cam = cam - np.min(cam)
-        cam = cam / (np.max(cam) + 1e-8)
-        
+
+        # Resize heatmap to the model input dimensions.
+        height = input_tensor.shape[2]
+        width = input_tensor.shape[3]
+
+        cam = cv2.resize(
+            cam,
+            (width, height),
+        )
+
+        # Normalize to [0, 1].
+        cam -= cam.min()
+
+        max_value = cam.max()
+
+        if max_value > 0:
+            cam /= max_value
+
         return cam
 
-def visualize_prediction(image, cam, prediction, true_label=None, save_path=None):
-    plt.figure(figsize=(10, 5))
-    
-    plt.subplot(1, 2, 1)
-    plt.imshow(image, cmap='gray')
-    plt.title('Original Image')
-    plt.axis('off')
-    
-    plt.subplot(1, 2, 2)
-    plt.imshow(image, cmap='gray')
-    plt.imshow(cam, cmap='jet', alpha=0.5)
-    plt.title('Class Activation Map')
-    plt.axis('off')
-    
+    def close(self):
+        """Remove registered PyTorch hooks."""
+        self.forward_handle.remove()
+        self.backward_handle.remove()
+
+
+def visualize_prediction(
+    image,
+    cam,
+    prediction,
+    true_label=None,
+    save_path=None,
+):
+    """
+    Display an X-ray alongside its Grad-CAM heatmap.
+    """
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(10, 5),
+    )
+
+    axes[0].imshow(
+        image,
+        cmap="gray",
+    )
+    axes[0].set_title("Original X-ray")
+    axes[0].axis("off")
+
+    axes[1].imshow(
+        image,
+        cmap="gray",
+    )
+    axes[1].imshow(
+        cam,
+        cmap="jet",
+        alpha=0.5,
+    )
+    axes[1].set_title("Grad-CAM")
+    axes[1].axis("off")
+
     if true_label is not None:
-        plt.suptitle(f'Prediction: {prediction}\nTrue Label: {true_label}')
+        fig.suptitle(
+            f"Prediction: {prediction}\n"
+            f"True Label: {true_label}"
+        )
     else:
-        plt.suptitle(f'Prediction: {prediction}')
-    
-    if save_path:
-        plt.savefig(save_path)
-        plt.close()
+        fig.suptitle(
+            f"Prediction: {prediction}"
+        )
+
+    fig.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(
+            save_path,
+            bbox_inches="tight",
+            dpi=150,
+        )
+        plt.close(fig)
+
     else:
         plt.show()
 
-def plot_training_history(history, save_path=None):
-    plt.figure(figsize=(12, 4))
-    plt.subplot(1, 2, 1)
-    plt.plot(history['train_loss'], label='Train Loss')
-    plt.plot(history['val_loss'], label='Validation Loss')
-    plt.title('Loss History')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    
-    plt.subplot(1, 2, 2)
-    plt.plot(history['val_auc'], label='Validation AUC')
-    plt.title('AUC History')
-    plt.xlabel('Epoch')
-    plt.ylabel('AUC')
-    plt.legend()
-    
-    if save_path:
-        plt.savefig(save_path)
-        plt.close()
+
+def plot_training_history(
+    history,
+    save_path=None,
+):
+    """
+    Plot training/validation loss and validation ROC-AUC.
+    """
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(12, 4),
+    )
+
+    axes[0].plot(
+        history["train_loss"],
+        label="Training Loss",
+    )
+
+    axes[0].plot(
+        history["val_loss"],
+        label="Validation Loss",
+    )
+
+    axes[0].set_title("Loss History")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].legend()
+
+    axes[1].plot(
+        history["val_auc"],
+        label="Validation AUC",
+    )
+
+    axes[1].set_title(
+        "Validation ROC-AUC"
+    )
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("ROC-AUC")
+    axes[1].legend()
+
+    fig.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(
+            save_path,
+            bbox_inches="tight",
+            dpi=150,
+        )
+        plt.close(fig)
+
     else:
         plt.show()
